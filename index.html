@@ -1026,14 +1026,28 @@ function hostOnData(conn,d){
     renderLobby(); broadcastLobby();
     conn.send({t:'joined',code:MP.code});
   }
+  if(d.t==='sync'){
+    // un invité s'est désynchronisé : on lui renvoie l'état courant
+    if(MP.finished){ try{conn.send({t:'finish',standings:MP.lastStandings||[]});}catch(e){} return; }
+    if(MP.curPayload){ try{conn.send(MP.curPayload);}catch(e){} }
+    return;
+  }
   if(d.t==='guess'){
     // ignorer les réponses qui ne concernent pas la manche courante (anti-décalage)
     if(typeof d.round==='number' && d.round!==MP.round) return;
     if(MP.resolved) return;
     MP.answers[d.id]={guess:d.guess,name:d.name};
     broadcast({t:'progress',answered:Object.keys(MP.answers).length,total:MP.players.length});
+    showRespCount();
     maybeResolveRound();
   }
+}
+function showRespCount(){
+  if(MP.role!=='host'||MP.resolved)return;
+  const have=Object.keys(MP.answers).length, need=MP.players.length;
+  const vb=document.getElementById('gValidate');
+  // n'affiche le compteur que si l'hôte a déjà répondu (sinon il joue encore)
+  if(vb && MP.answered){ vb.textContent=`En attente… ${have}/${need} ont répondu`; }
 }
 
 function broadcast(msg){ MP.players.forEach(p=>{if(p.conn){try{p.conn.send(msg);}catch(e){}}}); }
@@ -1053,7 +1067,7 @@ function selMpMode(el){document.querySelectorAll('.mpmode').forEach(m=>m.classLi
 /* ---------- HÔTE : lancer ---------- */
 function mpStart(){
   if(MP.players.length<2){if(!confirm('Tu es seul dans le salon. Lancer quand même (en solo) ?'))return;}
-  MP.started=true;
+  MP.started=true; MP.finished=false; MP.totals={}; MP.curPayload=null;
   MP.cars=shuffle(CARS).slice(0,5);
   MP.round=-1;
   hostNextRound();
@@ -1068,6 +1082,7 @@ function hostNextRound(){
   // payload sans le prix (anti-triche basique : on n'envoie pas prix_reel)
   const payload={t:'round',round:MP.round,total:MP.cars.length,mode:MP.mode,
     car:{id:c.id,img:c.img,marque:c.marque,modele:c.modele,version:c.version,annee:c.annee,km:c.km,carburant:c.carburant,boite:c.boite,puiss:c.puiss,portes:c.portes,desc:c.desc,equip:c.equip,mec:c.mec,conso:c.conso,critair:c.critair}};
+  MP.curPayload=payload;
   broadcast(payload);
   // l'hôte joue aussi
   mpLoadRound(payload);
@@ -1101,6 +1116,7 @@ function hostResolve(){
 }
 function hostFinish(){
   const standings=MP.players.map(p=>({id:p.id,name:p.name,score:(MP.totals&&MP.totals[p.id])||0})).sort((a,b)=>b.score-a.score);
+  MP.finished=true; MP.lastStandings=standings; MP.curPayload=null;
   broadcast({t:'finish',standings});
   mpFinish(standings);
 }
@@ -1156,6 +1172,7 @@ function guestOnData(d){
 function mpLoadRound(d){
   MP.curCar=d.car; MP.curRound=d.round; MP.curMode=d.mode; MP.answered=false;
   MP.pendingRound=null; MP.pendingFinish=null; MP.waitingNext=false;
+  clearInterval(MP.syncInt);
   clearInterval(timerInt);
   document.getElementById('revealOv').classList.remove('show');
   go('game');
@@ -1184,17 +1201,32 @@ function mpSubmit(){
   MP.answered=true;
   clearInterval(timerInt);
   const guess=getGuess()||1;
+  MP.myGuess=guess;
   document.getElementById('gValidate').disabled=true;
   document.getElementById('gValidate').textContent='En attente des autres…';
   if(MP.role==='host'){
     MP.answers['host']={guess,name:MP.pseudo};
+    showRespCount();
     maybeResolveRound();
+    // si un joueur traîne, proposer de forcer après 12s
+    clearTimeout(MP.forceTO);
+    MP.forceTO=setTimeout(()=>{
+      if(!MP.resolved){
+        const vb=document.getElementById('gValidate');
+        if(vb){vb.disabled=false;vb.textContent='Forcer la suite ▶';vb.onclick=()=>{if(!MP.resolved){MP.resolved=true;hostResolve();}};}
+      }
+    },12000);
   }else{
-    MP.conn.send({t:'guess',id:MP.myId,name:MP.pseudo,guess,round:MP.curRound});
+    // envoi + renvois de secours si le message se perd
+    const send=()=>{ try{MP.conn.send({t:'guess',id:MP.myId,name:MP.pseudo,guess,round:MP.curRound});}catch(e){} };
+    send();
+    clearInterval(MP.guessRetry);
+    let tries=0;
+    MP.guessRetry=setInterval(()=>{ tries++; if(tries>4||!MP.answered){clearInterval(MP.guessRetry);return;} send(); },2000);
   }
 }
 function mpShowReveal(d){
-  clearInterval(timerInt);
+  clearInterval(timerInt); clearInterval(MP.guessRetry); clearTimeout(MP.forceTO);
   const myId = MP.role==='host'?'host':MP.myId;
   const mine=d.results.find(r=>r.id===myId)||{guess:0,gap:0,pct:0,pts:0};
   document.getElementById('rPrice').textContent=d.price.toLocaleString('fr-FR')+' €';
@@ -1219,13 +1251,20 @@ function mpShowReveal(d){
       // classement, on l'affiche ; sinon on patiente sans toucher à la saisie.
       if(MP.pendingRound){ const pr=MP.pendingRound; MP.pendingRound=null; mpLoadRound(pr); }
       else if(MP.pendingFinish){ const pf=MP.pendingFinish; MP.pendingFinish=null; mpFinish(pf); }
-      else { MP.waitingNext=true; go('game'); document.querySelector('.guess').innerHTML='<div class="waitothers"><span class="spin">⏳</span> En attente de l\'hôte…</div>'; }
+      else {
+        MP.waitingNext=true; go('game');
+        document.querySelector('.guess').innerHTML='<div class="waitothers"><span class="spin">⏳</span> En attente de l\'hôte…</div>';
+        // auto-réparation : redemander la manche courante à l'hôte (au cas où un message ait été perdu)
+        const ask=()=>{ if(MP.waitingNext && MP.conn){ try{MP.conn.send({t:'sync'});}catch(e){} } };
+        ask(); clearInterval(MP.syncInt); MP.syncInt=setInterval(ask,1500);
+      }
     }
   };
   document.getElementById('revealOv').classList.add('show');
 }
 function mpFinish(standings){
-  clearInterval(timerInt);
+  clearInterval(timerInt); clearInterval(MP.syncInt);
+  MP.pendingRound=null; MP.pendingFinish=null; MP.waitingNext=false;
   document.getElementById('revealOv').classList.remove('show');
   const myId=MP.role==='host'?'host':MP.myId;
   const myPos=standings.findIndex(s=>s.id===myId)+1;
