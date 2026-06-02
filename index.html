@@ -1138,16 +1138,26 @@ function guestOnData(d){
     document.getElementById('mpCodeBox').querySelector('.cs').textContent='Attends que l\'hôte lance';go('mplobby');}
   if(d.t==='rejected'){toast('⚠️ '+d.why);leaveMp('mproom');}
   if(d.t==='lobby'){MP.lobbyPlayers=d.players;renderLobby();}
-  if(d.t==='round'){mpLoadRound(d);}
-  if(d.t==='progress'){/* pourrait afficher x/y ont répondu */}
+  if(d.t==='round'){
+    const revealing=document.getElementById('revealOv').classList.contains('show');
+    if(revealing && !MP.waitingNext){ MP.pendingRound=d; }   // garder pour quand le joueur clique
+    else { MP.waitingNext=false; mpLoadRound(d); }
+  }
+  if(d.t==='progress'){/* x/y ont répondu */}
   if(d.t==='reveal'){mpShowReveal(d);}
-  if(d.t==='finish'){mpFinish(d.standings);}
+  if(d.t==='finish'){
+    const revealing=document.getElementById('revealOv').classList.contains('show');
+    if(revealing && !MP.waitingNext){ MP.pendingFinish=d.standings; }
+    else { MP.waitingNext=false; mpFinish(d.standings); }
+  }
 }
 
 /* ---------- AFFICHAGE PARTAGÉ (hôte + invités) ---------- */
 function mpLoadRound(d){
   MP.curCar=d.car; MP.curRound=d.round; MP.curMode=d.mode; MP.answered=false;
+  MP.pendingRound=null; MP.pendingFinish=null; MP.waitingNext=false;
   clearInterval(timerInt);
+  document.getElementById('revealOv').classList.remove('show');
   go('game');
   // IMPORTANT : reconstruire la zone de saisie (un invité l'a pu remplacer par "en attente")
   restoreGuessUI();
@@ -1204,9 +1214,12 @@ function mpShowReveal(d){
   nb.onclick=()=>{
     document.getElementById('revealOv').classList.remove('show');
     if(MP.role==='host'){ if(d.isLast)hostFinish(); else hostNextRound(); }
-    else{ // invité attend le prochain message round/finish
-      go('game');
-      document.querySelector('.guess').innerHTML='<div class="waitothers"><span class="spin">⏳</span> En attente de l\'hôte…</div>';
+    else{
+      // Invité : si la manche suivante est déjà arrivée pendant l'affichage du
+      // classement, on l'affiche ; sinon on patiente sans toucher à la saisie.
+      if(MP.pendingRound){ const pr=MP.pendingRound; MP.pendingRound=null; mpLoadRound(pr); }
+      else if(MP.pendingFinish){ const pf=MP.pendingFinish; MP.pendingFinish=null; mpFinish(pf); }
+      else { MP.waitingNext=true; go('game'); document.querySelector('.guess').innerHTML='<div class="waitothers"><span class="spin">⏳</span> En attente de l\'hôte…</div>'; }
     }
   };
   document.getElementById('revealOv').classList.add('show');
