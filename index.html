@@ -199,6 +199,7 @@ body{
 .prow .pn{flex:1;text-align:left;}
 .prow .pg{font-family:'Cousine';font-size:12px;color:var(--muted);}
 .prow .pp{font-family:'Bebas Neue';font-size:18px;color:var(--amber);}
+.prow .pn .pbid{display:block;font-family:'Cousine';font-size:11px;color:var(--muted);font-weight:400;margin-top:1px;}
 .prow.elim{opacity:.4;text-decoration:line-through;}
 .rcard .next{margin-top:18px;width:100%;font-family:'Oswald';font-weight:700;font-size:18px;letter-spacing:1px;text-transform:uppercase;background:linear-gradient(180deg,var(--amber-bright),var(--amber));color:#221700;border:none;border-radius:13px;padding:14px;cursor:pointer;}
 .rcard .next:active{transform:scale(.98);}
@@ -210,6 +211,19 @@ body{
 .finalwrap h2{font-family:'Bebas Neue';font-size:40px;letter-spacing:1px;margin-top:6px;}
 .finalsub{color:var(--muted);font-size:14px;letter-spacing:1px;margin-bottom:18px;}
 .finalboard{display:flex;flex-direction:column;gap:8px;margin-bottom:20px;}
+.fdetail{display:flex;flex-direction:column;gap:2px;background:var(--ink2);border:1px solid var(--line);border-radius:12px;padding:8px;overflow:hidden;}
+.fdrow{display:flex;align-items:center;gap:6px;padding:8px 8px;font-size:13px;border-radius:6px;}
+.fdrow .fdc{flex:1;text-align:left;font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.fdrow .fdv{font-family:'Cousine';font-size:12px;color:var(--muted);width:72px;text-align:right;flex-shrink:0;}
+.fdrow .fdp{font-family:'Bebas Neue';font-size:17px;color:var(--amber);width:62px;text-align:right;flex-shrink:0;}
+.fdrow.fdhead{font-size:10px;letter-spacing:1px;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--line);padding-bottom:6px;}
+.fdrow.fdhead .fdv,.fdrow.fdhead .fdp{font-family:'Oswald';font-size:10px;color:var(--muted);}
+.fdrow.fdtot{background:var(--panel2);border:1px solid var(--amber);margin-top:4px;}
+.fdrow.fdtot .fdc{font-family:'Bebas Neue';font-size:18px;letter-spacing:1px;}
+.fdrow.fdtot .fdp{font-size:22px;color:var(--amber-bright);}
+.fdrow .fdpp{font-family:'Cousine';font-size:11px;color:var(--amber);flex:1;text-align:right;min-width:32px;}
+.fdrow.fdhead .fdpp{font-family:'Oswald';color:var(--muted);font-size:10px;}
+.fdrow.fdtot .fdpp{font-family:'Bebas Neue';font-size:16px;color:var(--amber-bright);}
 .xpgain{background:var(--ink2);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:18px;}
 .xpgain .xl{font-size:11px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;}
 .xpgain .xv{font-family:'Bebas Neue';font-size:30px;color:var(--green);}
@@ -893,16 +907,16 @@ function bump(n){
 function getGuess(){return parseInt(document.getElementById('gInput').value.replace(/\D/g,'')||'0',10);}
 function autoSubmit(){ if(getGuess()<=0)document.getElementById('gInput').value='1'; submitGuess(); }
 
-/* scoring en % d'écart */
-function scoreFromPct(pct){
-  if(pct<=0.5) return 100;
-  if(pct<=2)   return 90;
-  if(pct<=5)   return 75;
-  if(pct<=10)  return 55;
-  if(pct<=18)  return 35;
-  if(pct<=30)  return 15;
-  return 0;
+/* Nouveau scoring "à l'euro" : points = max(0, prix réel − écart absolu).
+   Plus tu es proche, plus tu marques (au max le prix réel si tu tombes pile). */
+function scorePoints(guess, prix, mult){
+  const gap=Math.abs(guess-prix);
+  let pts=Math.max(0, prix-gap);
+  if(mult && mult!==1) pts=Math.round(pts*mult);
+  return Math.round(pts);
 }
+/* conservée pour compat éventuelle, non utilisée par le nouveau calcul */
+function scoreFromPct(pct){ return 0; }
 
 function submitGuess(){
   clearInterval(timerInt);
@@ -912,19 +926,16 @@ function submitGuess(){
 
   const gap=Math.abs(guess-c.prix);
   const pct=gap/c.prix*100;
-  let pts=Math.round(scoreFromPct(pct)*cfg.mult);
+  let pts=scorePoints(guess,c.prix,cfg.mult);
   const exact = guess===c.prix;
-  if(exact)pts+=100;
 
   // adversaires : devinent autour du prix avec un biais selon skill
   G.bots.forEach(b=>{
-    if(b.elim){b.lastGuess=null;b.lastGap=Infinity;return;}
+    if(b.elim){b.lastGuess=null;b.lastGap=Infinity;b.lastPts=0;return;}
     const err=(Math.random()*2-1)*b.skill + (Math.random()*0.04-0.02);
-    const bg=Math.round(c.prix*(1+err));
+    const bg=Math.max(100,Math.round(c.prix*(1+err)));
     b.lastGuess=bg; b.lastGap=Math.abs(bg-c.prix);
-    const bpct=b.lastGap/c.prix*100;
-    b.lastPts=Math.round(scoreFromPct(bpct)*cfg.mult);
-    if(bg===c.prix)b.lastPts+=100;
+    b.lastPts=scorePoints(bg,c.prix,cfg.mult);
     b.score+=b.lastPts;
   });
   G.myScore+=pts;
@@ -936,45 +947,38 @@ function submitGuess(){
   if(pct<=5 && c.marque==='Renault')S.renaultAce=true;
   if(pct<=10 && c.id==='honda')S.sportAce=true;
 
-  G.rounds.push({car:c.id,guess,gap,pct,pts,exact});
+  G.rounds.push({car:c.id,marque:c.marque,modele:c.modele,prix:c.prix,guess,gap,pct,pts,exact});
 
-  // best estimation bonus (closest among me + bots)
-  const allGaps=[{n:'me',gap},...G.bots.filter(b=>!b.elim&&b.lastGuess!=null).map(b=>({n:b.name,gap:b.lastGap}))];
-  allGaps.sort((a,b)=>a.gap-b.gap);
-  let bonusBest=false;
-  if(allGaps[0].n==='me' && G.bots.length>0){pts+=20;G.myScore+=20;bonusBest=true;}
-
-  showReveal(c,guess,gap,pct,pts,exact,bonusBest,allGaps);
+  showReveal(c,guess,gap,pct,pts,exact);
 }
 
-function showReveal(c,guess,gap,pct,pts,exact,bonusBest,allGaps){
+function showReveal(c,guess,gap,pct,pts,exact){
   document.getElementById('rPrice').textContent=c.prix.toLocaleString('fr-FR')+' €';
   document.getElementById('rGuess').textContent=guess.toLocaleString('fr-FR')+' €';
-  document.getElementById('rGap').textContent=`Écart : ${gap.toLocaleString('fr-FR')} € (${pct.toFixed(1)} %)`;
+  document.getElementById('rGap').textContent=`Écart : ${gap.toLocaleString('fr-FR')} €`;
   const pEl=document.getElementById('rPts');
-  pEl.textContent=(pts>0?'+':'')+pts+' pts';
+  pEl.textContent='+'+pts.toLocaleString('fr-FR')+' pts';
   pEl.classList.toggle('zero',pts===0);
   let bon=[];
-  if(exact)bon.push('🎯 PRIX EXACT +100');
-  if(bonusBest)bon.push('⭐ Meilleure estimation +20');
+  if(exact)bon.push('🎯 PRIX EXACT — score maximum !');
   document.getElementById('rBonus').textContent=bon.join('  ·  ');
 
-  // classement manche (seulement multi)
+  // classement de la manche : montre l'estimation ET les points de chacun
   const wrap=document.getElementById('rRankWrap');
   if(G.cfg.bots>0){
     wrap.style.display='block';
-    const board=[{name:'Toi',gap,pts,me:true},...G.bots.filter(b=>!b.elim&&b.lastGuess!=null).map(b=>({name:b.name,gap:b.lastGap,pts:b.lastPts}))];
-    board.sort((a,b)=>a.gap-b.gap);
+    document.querySelector('#rRankWrap .rt').textContent='Manche : estimations & points';
+    const board=[{name:'Toi',guess,gap,pts,me:true},...G.bots.filter(b=>!b.elim&&b.lastGuess!=null).map(b=>({name:b.name,guess:b.lastGuess,gap:b.lastGap,pts:b.lastPts}))];
+    board.sort((a,b)=>b.pts-a.pts);
     document.getElementById('rRank').innerHTML=board.map((r,i)=>
-      `<div class="prow ${r.me?'me':''}"><span class="pos">${i+1}</span><span class="pn">${r.name}</span><span class="pg">±${r.gap.toLocaleString('fr-FR')}€</span><span class="pp">+${r.pts}</span></div>`
+      `<div class="prow ${r.me?'me':''}"><span class="pos">${i+1}</span><span class="pn">${r.name}<span class="pbid">${r.guess.toLocaleString('fr-FR')} €</span></span><span class="pp">+${r.pts.toLocaleString('fr-FR')}</span></div>`
     ).join('');
-    // élimination chrono
+    // élimination (Battle Royale) : le plus FAIBLE score de la manche saute
     if(G.cfg.elim){
-      const alive=board.filter(r=>!r.me || true); // tout le monde present
       const last=board[board.length-1];
       if(!last.me){const bot=G.bots.find(b=>b.name===last.name);if(bot)bot.elim=true;
         setTimeout(()=>toast('💥 '+last.name+' éliminé !'),400);}
-      else{ /* le joueur le plus loin = toi : tu perds en chrono */ G.playerEliminated=true; }
+      else{ G.playerEliminated=true; }
     }
   }else{wrap.style.display='none';}
 
@@ -1011,7 +1015,7 @@ function endGame(){
   if(allClose && G.rounds.length>=5)S.perfectGame=true;
 
   // XP
-  let xpGain = Math.round(G.myScore*0.5) + (won?60:20);
+  let xpGain = Math.round(G.myScore*0.05) + (won?60:20);
   const before={level:S.level,xp:S.xp};
   S.xp+=xpGain;
   recomputeLevel();
@@ -1031,7 +1035,7 @@ function endGame(){
   // rendu écran final
   document.getElementById('fTrophy').textContent = G.cfg.solo?'🎯' : won?'🏆':(G.playerEliminated?'💥':'🥈');
   document.getElementById('fTitle').textContent = G.cfg.solo?'Entraînement terminé' : won?'Victoire !':(G.playerEliminated?'Éliminé !':'Pas mal !');
-  document.getElementById('fSub').textContent = G.cfg.solo? `Score : ${G.myScore} pts` : `${G.cfg.label} · ${G.myScore} pts · ${myPos}ᵉ place`;
+  document.getElementById('fSub').textContent = G.cfg.solo? `Total : ${G.myScore.toLocaleString('fr-FR')} pts` : `${G.cfg.label} · ${G.myScore.toLocaleString('fr-FR')} pts · ${myPos}ᵉ place`;
   document.getElementById('fXp').textContent='+'+xpGain+' XP';
   document.getElementById('fXpBar').style.width='0%';
   setTimeout(()=>{document.getElementById('fXpBar').style.width=Math.min(100,S.xp/xpForLevel(S.level)*100)+'%';},150);
@@ -1039,14 +1043,29 @@ function endGame(){
 
   const fb=document.getElementById('fBoard');
   if(G.cfg.solo){
-    fb.innerHTML = G.rounds.map((r,i)=>{
-      const c=CARS.find(x=>x.id===r.car);
-      return `<div class="prow ${r.pts>=75?'me':''}"><span class="pos">${i+1}</span><span class="pn">${c.marque} ${c.modele}</span><span class="pg">${r.pct.toFixed(0)}%</span><span class="pp">+${r.pts}</span></div>`;
-    }).join('');
+    // détail voiture par voiture + total
+    let html='<div class="fdetail">';
+    html+='<div class="fdrow fdhead"><span class="fdc">Voiture</span><span class="fdv">Prix réel</span><span class="fdv">Ton prix</span><span class="fdp">Points</span></div>';
+    G.rounds.forEach(r=>{
+      html+=`<div class="fdrow"><span class="fdc">${r.marque} ${r.modele}</span><span class="fdv">${r.prix.toLocaleString('fr-FR')} €</span><span class="fdv">${r.guess.toLocaleString('fr-FR')} €</span><span class="fdp">+${r.pts.toLocaleString('fr-FR')}</span></div>`;
+    });
+    html+=`<div class="fdrow fdtot"><span class="fdc">TOTAL</span><span class="fdv"></span><span class="fdv"></span><span class="fdp">${G.myScore.toLocaleString('fr-FR')}</span></div>`;
+    html+='</div>';
+    fb.innerHTML=html;
   }else{
-    fb.innerHTML = board.map((r,i)=>
-      `<div class="prow ${r.me?'me':''} ${r.elim?'elim':''}"><span class="pos">${i+1}</span><span class="pn">${r.name}</span><span class="pp">${r.score}</span></div>`
+    // classement général des joueurs + détail par voiture (prix réel + total de chacun)
+    let html=board.map((r,i)=>
+      `<div class="prow ${r.me?'me':''} ${r.elim?'elim':''}"><span class="pos">${i+1}</span><span class="pn">${r.name}</span><span class="pp">${r.score.toLocaleString('fr-FR')}</span></div>`
     ).join('');
+    // tableau détaillé : chaque voiture, son prix, ce que toi + bots avez marqué
+    html+='<div class="fdetail" style="margin-top:14px">';
+    html+='<div class="fdrow fdhead"><span class="fdc">Voiture</span><span class="fdv">Prix réel</span><span class="fdp">Tes pts</span></div>';
+    G.rounds.forEach(r=>{
+      html+=`<div class="fdrow"><span class="fdc">${r.marque} ${r.modele}</span><span class="fdv">${r.prix.toLocaleString('fr-FR')} €</span><span class="fdp">+${r.pts.toLocaleString('fr-FR')}</span></div>`;
+    });
+    html+=`<div class="fdrow fdtot"><span class="fdc">TON TOTAL</span><span class="fdv"></span><span class="fdp">${G.myScore.toLocaleString('fr-FR')}</span></div>`;
+    html+='</div>';
+    fb.innerHTML=html;
   }
 
   // réinitialiser les boutons du final (un mode multi a pu les modifier)
@@ -1227,7 +1246,7 @@ function selMpMode(el){document.querySelectorAll('.mpmode').forEach(m=>m.classLi
 /* ---------- HÔTE : lancer ---------- */
 function mpStart(){
   if(MP.players.length<2){if(!confirm('Tu es seul dans le salon. Lancer quand même (en solo) ?'))return;}
-  MP.started=true; MP.finished=false; MP.totals={}; MP.curPayload=null;
+  MP.started=true; MP.finished=false; MP.totals={}; MP.curPayload=null; MP.history=[];
   MP.cars=shuffle(CARS).slice(0,5);
   MP.round=-1;
   hostNextRound();
@@ -1259,26 +1278,29 @@ function hostResolve(){
   const results=MP.players.map(p=>{
     const a=MP.answers[p.id]||{guess:0,name:p.name};
     const gap=Math.abs(a.guess-c.prix);
-    const pct=gap/c.prix*100;
-    let pts=Math.round(scoreFromPct(pct)*cfg.mult);
-    if(a.guess===c.prix)pts+=100;
-    return {id:p.id,name:p.name,guess:a.guess,gap,pct,pts,exact:a.guess===c.prix};
+    const pts=scorePoints(a.guess,c.prix,cfg.mult);
+    return {id:p.id,name:p.name,guess:a.guess,gap,pts,exact:a.guess===c.prix};
   });
-  results.sort((a,b)=>a.gap-b.gap);
-  if(results.length>1 && results[0].gap<Infinity){results[0].pts+=20;results[0].best=true;}
+  results.sort((a,b)=>b.pts-a.pts);   // tri par points (meilleur en haut)
   // cumul scores
   if(!MP.totals)MP.totals={};
   results.forEach(r=>{MP.totals[r.id]=(MP.totals[r.id]||0)+r.pts;});
   const standings=MP.players.map(p=>({id:p.id,name:p.name,score:MP.totals[p.id]||0})).sort((a,b)=>b.score-a.score);
+  // historique par voiture (pour le récap final)
+  if(!MP.history)MP.history=[];
+  MP.history.push({marque:c.marque,modele:c.modele,prix:c.prix,
+    results:results.map(r=>({id:r.id,name:r.name,guess:r.guess,pts:r.pts}))});
   const isLast=MP.round>=MP.cars.length-1;
-  broadcast({t:'reveal',price:c.prix,results,standings,isLast});
-  mpShowReveal({price:c.prix,results,standings,isLast});
+  const payload={t:'reveal',price:c.prix,marque:c.marque,modele:c.modele,results,standings,isLast};
+  broadcast(payload);
+  mpShowReveal(payload);
 }
 function hostFinish(){
   const standings=MP.players.map(p=>({id:p.id,name:p.name,score:(MP.totals&&MP.totals[p.id])||0})).sort((a,b)=>b.score-a.score);
   MP.finished=true; MP.lastStandings=standings; MP.curPayload=null;
-  broadcast({t:'finish',standings});
-  mpFinish(standings);
+  const payload={t:'finish',standings,history:MP.history||[]};
+  broadcast(payload);
+  mpFinish(standings, MP.history||[]);
 }
 
 /* ---------- INVITÉ : rejoindre ---------- */
@@ -1323,8 +1345,8 @@ function guestOnData(d){
   if(d.t==='reveal'){mpShowReveal(d);}
   if(d.t==='finish'){
     const revealing=document.getElementById('revealOv').classList.contains('show');
-    if(revealing && !MP.waitingNext){ MP.pendingFinish=d.standings; }
-    else { MP.waitingNext=false; mpFinish(d.standings); }
+    if(revealing && !MP.waitingNext){ MP.pendingFinish=d.standings; MP.pendingHistory=d.history||[]; }
+    else { MP.waitingNext=false; mpFinish(d.standings, d.history||[]); }
   }
 }
 
@@ -1388,33 +1410,39 @@ function mpSubmit(){
 function mpShowReveal(d){
   clearInterval(timerInt); clearInterval(MP.guessRetry); clearTimeout(MP.forceTO);
   const myId = MP.role==='host'?'host':MP.myId;
-  const mine=d.results.find(r=>r.id===myId)||{guess:0,gap:0,pct:0,pts:0};
+  const mine=d.results.find(r=>r.id===myId)||{guess:0,gap:0,pts:0};
   document.getElementById('rPrice').textContent=d.price.toLocaleString('fr-FR')+' €';
   document.getElementById('rGuess').textContent=mine.guess.toLocaleString('fr-FR')+' €';
-  document.getElementById('rGap').textContent=`Écart : ${mine.gap.toLocaleString('fr-FR')} € (${mine.pct.toFixed(1)} %)`;
-  const pEl=document.getElementById('rPts');pEl.textContent=(mine.pts>0?'+':'')+mine.pts+' pts';pEl.classList.toggle('zero',mine.pts===0);
-  let bon=[];if(mine.exact)bon.push('🎯 PRIX EXACT +100');if(mine.best)bon.push('⭐ Meilleure estimation +20');
+  document.getElementById('rGap').textContent=`Écart : ${mine.gap.toLocaleString('fr-FR')} €`;
+  const pEl=document.getElementById('rPts');pEl.textContent='+'+mine.pts.toLocaleString('fr-FR')+' pts';pEl.classList.toggle('zero',mine.pts===0);
+  let bon=[];if(mine.exact)bon.push('🎯 PRIX EXACT — score max !');
   document.getElementById('rBonus').textContent=bon.join('  ·  ');
   document.getElementById('rRankWrap').style.display='block';
-  document.querySelector('#rRankWrap .rt').textContent='Classement général';
-  document.getElementById('rRank').innerHTML=d.standings.map((r,i)=>{
+  document.querySelector('#rRankWrap .rt').textContent='Manche : qui a misé combien';
+  // section 1 : estimations + points de la manche (tous les joueurs)
+  const byPts=[...d.results].sort((a,b)=>b.pts-a.pts);
+  let html=byPts.map((r,i)=>{
     const me=r.id===myId;
-    return `<div class="prow ${me?'me':''}"><span class="pos">${i+1}</span><span class="pn">${r.name}${me?' (toi)':''}</span><span class="pp">${r.score}</span></div>`;
+    return `<div class="prow ${me?'me':''}"><span class="pos">${i+1}</span><span class="pn">${r.name}${me?' (toi)':''}<span class="pbid">${(r.guess||0).toLocaleString('fr-FR')} €</span></span><span class="pp">+${(r.pts||0).toLocaleString('fr-FR')}</span></div>`;
   }).join('');
+  // section 2 : total général
+  html+='<div class="rt" style="margin:12px 0 8px">Total général</div>';
+  html+=d.standings.map((r,i)=>{
+    const me=r.id===myId;
+    return `<div class="prow ${me?'me':''}"><span class="pos">${i+1}</span><span class="pn">${r.name}${me?' (toi)':''}</span><span class="pp">${(r.score||0).toLocaleString('fr-FR')}</span></div>`;
+  }).join('');
+  document.getElementById('rRank').innerHTML=html;
   const nb=document.getElementById('rNext');
   nb.textContent=d.isLast?'Voir les résultats ›':'Manche suivante ›';
   nb.onclick=()=>{
     document.getElementById('revealOv').classList.remove('show');
     if(MP.role==='host'){ if(d.isLast)hostFinish(); else hostNextRound(); }
     else{
-      // Invité : si la manche suivante est déjà arrivée pendant l'affichage du
-      // classement, on l'affiche ; sinon on patiente sans toucher à la saisie.
       if(MP.pendingRound){ const pr=MP.pendingRound; MP.pendingRound=null; mpLoadRound(pr); }
-      else if(MP.pendingFinish){ const pf=MP.pendingFinish; MP.pendingFinish=null; mpFinish(pf); }
+      else if(MP.pendingFinish){ const pf=MP.pendingFinish; MP.pendingFinish=null; mpFinish(pf, MP.pendingHistory||[]); }
       else {
         MP.waitingNext=true; go('game');
         document.querySelector('.guess').innerHTML='<div class="waitothers"><span class="spin">⏳</span> En attente de l\'hôte…</div>';
-        // auto-réparation : redemander la manche courante à l'hôte (au cas où un message ait été perdu)
         const ask=()=>{ if(MP.waitingNext && MP.conn){ try{MP.conn.send({t:'sync'});}catch(e){} } };
         ask(); clearInterval(MP.syncInt); MP.syncInt=setInterval(ask,1500);
       }
@@ -1422,7 +1450,7 @@ function mpShowReveal(d){
   };
   document.getElementById('revealOv').classList.add('show');
 }
-function mpFinish(standings){
+function mpFinish(standings, history){
   clearInterval(timerInt); clearInterval(MP.syncInt);
   MP.pendingRound=null; MP.pendingFinish=null; MP.waitingNext=false;
   document.getElementById('revealOv').classList.remove('show');
@@ -1433,26 +1461,48 @@ function mpFinish(standings){
   // stats locales
   S.games++; S.cars+=MP.cars?MP.cars.length:5;
   if(won)S.wins++; if(myScore>S.best)S.best=myScore;
-  let xpGain=Math.round(myScore*0.5)+(won?80:25);
+  let xpGain=Math.round(myScore*0.05)+(won?80:25);
   const before=S.level; S.xp+=xpGain; recomputeLevel();
   S.history.unshift({mode:'Salle privée',score:myScore,pos:myPos+'/'+standings.length,won,date:new Date().toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})});
   S.history=S.history.slice(0,12);
   TITLES.forEach(t=>{if(t.check(S)&&!S.titles.includes(t.id))S.titles.push(t.id);});
   buildLeaderboard();
-  // restaurer la zone de saisie (au cas où invité l'a vidée)
   restoreGuessUI();
   document.getElementById('fTrophy').textContent=won?'🏆':'🥈';
   document.getElementById('fTitle').textContent=won?'Victoire !':myPos+'ᵉ place';
-  document.getElementById('fSub').textContent=`Salle privée · ${myScore} pts · ${standings.length} joueurs`;
+  document.getElementById('fSub').textContent=`Salle privée · ${myScore.toLocaleString('fr-FR')} pts · ${standings.length} joueurs`;
   document.getElementById('fXp').textContent='+'+xpGain+' XP';
   document.getElementById('fXpBar').style.width='0%';
   setTimeout(()=>{document.getElementById('fXpBar').style.width=Math.min(100,S.xp/xpForLevel(S.level)*100)+'%';},150);
   document.getElementById('fLvlInfo').textContent=S.level>before?`🎉 Niveau ${S.level} atteint !`:`Niveau ${S.level} · ${S.xp}/${xpForLevel(S.level)} XP`;
-  document.getElementById('fBoard').innerHTML=standings.map((r,i)=>`<div class="prow ${r.id===myId?'me':''}"><span class="pos">${i+1}</span><span class="pn">${r.name}</span><span class="pp">${r.score}</span></div>`).join('');
+  // classement final + récap voiture par voiture
+  let html=standings.map((r,i)=>`<div class="prow ${r.id===myId?'me':''}"><span class="pos">${i+1}</span><span class="pn">${r.name}</span><span class="pp">${(r.score||0).toLocaleString('fr-FR')}</span></div>`).join('');
+  if(history && history.length){
+    // construire un tableau : lignes = voitures, colonnes = prix réel + points de chaque joueur
+    html+='<div class="fdetail" style="margin-top:14px">';
+    // en-tête avec les noms (abrégés)
+    const names=standings.map(s=>({id:s.id,name:s.name}));
+    html+='<div class="fdrow fdhead"><span class="fdc">Voiture</span><span class="fdv">Prix</span>'+
+      names.map(n=>`<span class="fdpp">${n.name.slice(0,5)}</span>`).join('')+'</div>';
+    history.forEach(h=>{
+      html+=`<div class="fdrow"><span class="fdc">${h.marque} ${h.modele}</span><span class="fdv">${h.prix.toLocaleString('fr-FR')}€</span>`;
+      names.forEach(n=>{
+        const res=h.results.find(r=>r.id===n.id);
+        html+=`<span class="fdpp">${res?('+'+res.pts.toLocaleString('fr-FR')):'—'}</span>`;
+      });
+      html+='</div>';
+    });
+    // ligne total
+    html+='<div class="fdrow fdtot"><span class="fdc">TOTAL</span><span class="fdv"></span>'+
+      names.map(n=>{const s=standings.find(x=>x.id===n.id);return `<span class="fdpp">${(s?.score||0).toLocaleString('fr-FR')}</span>`;}).join('')+'</div>';
+    html+='</div>';
+  }
+  document.getElementById('fBoard').innerHTML=html;
   // boutons : accueil ferme la connexion
+  document.querySelector('.xpgain').style.display='block';
   const btns=document.querySelectorAll('#final .btn');
   btns[0].onclick=()=>leaveMp('home');
-  btns[1].style.display='none'; // pas de "rejouer" direct en multi
+  btns[1].style.display='none';
   go('final');
 }
 function restoreGuessUI(){
@@ -1473,7 +1523,7 @@ function startPassPlay(){
   const num=Math.max(2,Math.min(6,parseInt(n)||3));
   const names=[];
   for(let i=0;i<num;i++){const nm=prompt(`Pseudo du joueur ${i+1} :`,'Joueur '+(i+1));names.push((nm||'').trim()||('Joueur '+(i+1)));}
-  PP={names,scores:names.map(()=>0),cars:shuffle(CARS).slice(0,5),round:0,turn:0,roundResults:[]};
+  PP={names,scores:names.map(()=>0),cars:shuffle(CARS).slice(0,5),round:0,turn:0,roundResults:[],history:[]};
   ppNextTurn();
 }
 function ppNextTurn(){
@@ -1496,26 +1546,29 @@ function ppNextTurn(){
 }
 function ppSubmit(){
   const c=PP.cars[PP.round];
-  const guess=getGuess()||1;
-  const gap=Math.abs(guess-c.prix);const pct=gap/c.prix*100;let pts=scoreFromPct(pct);if(guess===c.prix)pts+=100;
-  PP.roundResults.push({name:PP.names[PP.turn],guess,gap,pct,pts,idx:PP.turn});
+  const guess=getGuess()||0;
+  const gap=Math.abs(guess-c.prix);
+  const pts=scorePoints(guess,c.prix,1);
+  PP.roundResults.push({name:PP.names[PP.turn],guess,gap,pts,exact:guess===c.prix,idx:PP.turn});
   PP.turn++;
   ppNextTurn();
 }
 function ppReveal(){
   const c=PP.cars[PP.round];
-  const res=PP.roundResults.slice().sort((a,b)=>a.gap-b.gap);
-  if(res.length>1){res[0].pts+=20;res[0].best=true;}
+  const res=PP.roundResults.slice().sort((a,b)=>b.pts-a.pts);
   res.forEach(r=>{PP.scores[r.idx]+=r.pts;});
+  // mémoriser pour le récap final
+  if(!PP.history)PP.history=[];
+  PP.history.push({marque:c.marque,modele:c.modele,prix:c.prix,results:res.map(r=>({idx:r.idx,name:r.name,guess:r.guess,pts:r.pts}))});
   document.getElementById('rPrice').textContent=c.prix.toLocaleString('fr-FR')+' €';
   document.getElementById('rGuess').textContent='—';
-  document.getElementById('rGap').textContent=`${c.marque} ${c.modele} · ${c.version}`;
+  document.getElementById('rGap').textContent=`${c.marque} ${c.modele}`;
   document.getElementById('rPts').textContent='Manche '+(PP.round+1);
   document.getElementById('rPts').classList.remove('zero');
   document.getElementById('rBonus').textContent='';
   document.getElementById('rRankWrap').style.display='block';
-  document.querySelector('#rRankWrap .rt').textContent='Résultat de la manche';
-  document.getElementById('rRank').innerHTML=res.map((r,i)=>`<div class="prow ${i===0?'me':''}"><span class="pos">${i+1}</span><span class="pn">${r.name}</span><span class="pg">±${r.gap.toLocaleString('fr-FR')}€</span><span class="pp">+${r.pts}${r.best?' ⭐':''}</span></div>`).join('');
+  document.querySelector('#rRankWrap .rt').textContent='Manche : qui a misé combien';
+  document.getElementById('rRank').innerHTML=res.map((r,i)=>`<div class="prow ${i===0?'me':''}"><span class="pos">${i+1}</span><span class="pn">${r.name}<span class="pbid">${r.guess.toLocaleString('fr-FR')} €</span></span><span class="pp">+${r.pts.toLocaleString('fr-FR')}</span></div>`).join('');
   const isLast=PP.round>=PP.cars.length-1;
   const nb=document.getElementById('rNext');
   nb.textContent=isLast?'Classement final ›':'Manche suivante ›';
@@ -1523,12 +1576,29 @@ function ppReveal(){
   document.getElementById('revealOv').classList.add('show');
 }
 function ppFinish(){
-  const board=PP.names.map((n,i)=>({name:n,score:PP.scores[i]})).sort((a,b)=>b.score-a.score);
+  const board=PP.names.map((n,i)=>({idx:i,name:n,score:PP.scores[i]})).sort((a,b)=>b.score-a.score);
   document.getElementById('fTrophy').textContent='🏆';
   document.getElementById('fTitle').textContent=board[0].name+' gagne !';
   document.getElementById('fSub').textContent='Pass-and-play · '+PP.names.length+' joueurs';
   document.querySelector('.xpgain').style.display='none';
-  document.getElementById('fBoard').innerHTML=board.map((r,i)=>`<div class="prow ${i===0?'me':''}"><span class="pos">${i+1}</span><span class="pn">${r.name}</span><span class="pp">${r.score}</span></div>`).join('');
+  let html=board.map((r,i)=>`<div class="prow ${i===0?'me':''}"><span class="pos">${i+1}</span><span class="pn">${r.name}</span><span class="pp">${r.score.toLocaleString('fr-FR')}</span></div>`).join('');
+  if(PP.history && PP.history.length){
+    html+='<div class="fdetail" style="margin-top:14px">';
+    html+='<div class="fdrow fdhead"><span class="fdc">Voiture</span><span class="fdv">Prix</span>'+
+      PP.names.map(n=>`<span class="fdpp">${n.slice(0,5)}</span>`).join('')+'</div>';
+    PP.history.forEach(h=>{
+      html+=`<div class="fdrow"><span class="fdc">${h.marque} ${h.modele}</span><span class="fdv">${h.prix.toLocaleString('fr-FR')}€</span>`;
+      PP.names.forEach((n,idx)=>{
+        const res=h.results.find(r=>r.idx===idx);
+        html+=`<span class="fdpp">${res?('+'+res.pts.toLocaleString('fr-FR')):'—'}</span>`;
+      });
+      html+='</div>';
+    });
+    html+='<div class="fdrow fdtot"><span class="fdc">TOTAL</span><span class="fdv"></span>'+
+      PP.names.map((n,idx)=>`<span class="fdpp">${PP.scores[idx].toLocaleString('fr-FR')}</span>`).join('')+'</div>';
+    html+='</div>';
+  }
+  document.getElementById('fBoard').innerHTML=html;
   const btns=document.querySelectorAll('#final .btn');
   btns[0].onclick=()=>{document.querySelector('.xpgain').style.display='block';go('home');};
   btns[1].style.display='block';
